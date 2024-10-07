@@ -1,5 +1,6 @@
 stages:
   - train
+  - report
 
 variables:
   # Change pip's cache directory to be inside the project directory since we can
@@ -9,6 +10,8 @@ variables:
   GIT_DEPTH: "0"
   # Set the path to Google Service Account key for DVC - https://dvc.org/doc/command-reference/remote/add#google-cloud-storage
   GOOGLE_APPLICATION_CREDENTIALS: "${CI_PROJECT_DIR}/google-service-account-key.json"
+  # Environment variable for CML
+  REPO_TOKEN: $GITLAB_PAT
 
 train:
   stage: train
@@ -33,3 +36,62 @@ train:
       # https://pip.pypa.io/en/stable/reference/pip_install/#caching
       - .cache/pip
       - .venv/
+
+report:
+  stage: report
+  image: iterativeai/cml:0-dvc3-base1
+  needs:
+    - train
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  before_script:
+    # Set the Google Service Account key
+    - echo "${GOOGLE_SERVICE_ACCOUNT_KEY}" | base64 -d > $GOOGLE_APPLICATION_CREDENTIALS
+  script:
+    - |
+      # Fetch the experiment changes
+      dvc pull
+
+      # Fetch all other Git branches
+      git fetch --depth=1 origin main:main
+
+      # Add title to the report
+      echo "# Experiment Report (${CI_COMMIT_SHA})" >> report.md
+
+      # Compare parameters to main branch
+      echo "## Params workflow vs. main" >> report.md
+      dvc params diff main --md >> report.md
+
+      # Compare metrics to main branch
+      echo "## Metrics workflow vs. main" >> report.md
+      dvc metrics diff main --md >> report.md
+
+      # Compare plots (images) to main branch
+      dvc plots diff main
+
+      # Create plots
+      echo "## Plots" >> report.md
+
+      # Create training history plot
+      echo "### Training History" >> report.md
+      echo "#### main" >> report.md
+      echo '![](./dvc_plots/static/main_evaluation_plots_training_history.png "Training History")' >> report.md
+      echo "#### workspace" >> report.md
+      echo '![](./dvc_plots/static/workspace_evaluation_plots_training_history.png "Training History")' >> report.md
+
+      # Create predictions preview
+      echo "### Predictions Preview" >> report.md
+      echo "#### main" >> report.md
+      echo '![](./dvc_plots/static/main_evaluation_plots_pred_preview.png "Predictions Preview")' >> report.md
+      echo "#### workspace" >> report.md
+      echo '![](./dvc_plots/static/workspace_evaluation_plots_pred_preview.png "Predictions Preview")' >> report.md
+
+      # Create confusion matrix
+      echo "### Confusion Matrix" >> report.md
+      echo "#### main" >> report.md
+      echo '![](./dvc_plots/static/main_evaluation_plots_confusion_matrix.png "Confusion Matrix")' >> report.md
+      echo "#### workspace" >> report.md
+      echo '![](./dvc_plots/static/workspace_evaluation_plots_confusion_matrix.png "Confusion Matrix")' >> report.md
+
+      # Publish the CML report
+      cml comment update --target=pr --publish report.md
