@@ -1,0 +1,35 @@
+stages:
+  - train
+
+variables:
+  # Change pip's cache directory to be inside the project directory since we can
+  # only cache local items.
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  # https://dvc.org/doc/user-guide/troubleshooting?tab=GitLab-CI-CD#git-shallow
+  GIT_DEPTH: "0"
+  # Set the path to Google Service Account key for DVC - https://dvc.org/doc/command-reference/remote/add#google-cloud-storage
+  GOOGLE_APPLICATION_CREDENTIALS: "${CI_PROJECT_DIR}/google-service-account-key.json"
+
+train:
+  stage: train
+  image: python:3.11
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  before_script:
+    # Set the Google Service Account key
+    - echo "${GOOGLE_SERVICE_ACCOUNT_KEY}" | base64 -d > $GOOGLE_APPLICATION_CREDENTIALS
+    # Create the virtual environment for caching
+    - python3.11 -m venv .venv
+    - source .venv/bin/activate
+  script:
+    # Install dependencies
+    - pip install --requirement requirements-freeze.txt
+    # Run the experiment
+    - dvc repro --pull
+  cache:
+    paths:
+      # Pip's cache doesn't store the Python packages
+      # https://pip.pypa.io/en/stable/reference/pip_install/#caching
+      - .cache/pip
+      - .venv/
